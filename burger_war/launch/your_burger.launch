@@ -10,7 +10,7 @@
 
     <!-- sample program node -->
 
-    <node pkg="burger_war" type="randomRun.py" name="randomRun" output="screen"/>
+    <node pkg="burger_war" type="naviRun.py" name="randomRun" output="screen"/>
 
     <!-- END sample program node -->
 
