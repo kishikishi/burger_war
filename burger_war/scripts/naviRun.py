@@ -223,8 +223,6 @@ class image_converter:
         # RGB表色系からHSV表色系に変換                                                           
         hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
-        cv2.imwrite("/home/lsic/デスクトップ/dst/2-hsv.png",hsv_image)
-
         # 赤                                                 
         # color_min = np.array([150,100,150])
         # color_max = np.array([180,255,255])
@@ -240,7 +238,6 @@ class image_converter:
         #マスクの画像
         mask = cv2.inRange(hsv_image, color_min, color_max)
         res = cv2.bitwise_and(cv_image, cv_image, mask=mask)
-        cv2.imwrite("/home/lsic/デスクトップ/dst/3-blue-mask.png",res)
  
         # グレースケール化（色抽出）
         img = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
