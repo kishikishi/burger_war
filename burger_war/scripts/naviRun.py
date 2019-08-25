@@ -44,19 +44,23 @@ class OnigiriRun(object):
     def __init__(self):
         # self.scan = rospy.Subscriber(
         #     '/red_bot/scan', LaserScan, self.LaserScanCallback, queue_size=1)
+        # RESPECT @hotic06 ロボット名の取得の仕方
+        robot_name=rospy.get_param('~robot_name')
+        self.name = robot_name
+        print(self.name)
         self.result = rospy.Subscriber(
-            '/red_bot/move_base/result', MoveBaseActionResult, self.goalcallback, queue_size=1)
+            '/'+self.name  + '/move_base/result', MoveBaseActionResult, self.goalcallback, queue_size=1)
         self.cmd_vel_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
         self.slam = rospy.Publisher(
-            '/red_bot/move_base_simple/goal', PoseStamped, queue_size=1)
+            '/'+self.name + '/move_base_simple/goal', PoseStamped, queue_size=1)
         
         # velocity publisher
         self.vel_pub = rospy.Publisher('cmd_vel', Twist,queue_size=1)
 
         # odometry subscriber
-        self.odom_sub = rospy.Subscriber("/red_bot/odom",Odometry,self.odom_callback)
+        self.odom_sub = rospy.Subscriber("/" + self.name + "/odom",Odometry,self.odom_callback)
 
-        header = {'stamp': rospy.Time.now(), 'frame_id': "red_bot/map"}
+        header = {'stamp': rospy.Time.now(), 'frame_id': self.name +"/map"}
         pose = {'position': {'x': 1.0, 'y': 1.0,
                              'z': 0.0}, 'orientation': {'w': 1.0}}
 
@@ -71,7 +75,8 @@ class OnigiriRun(object):
         radians : 目標姿勢。0度が上。半時計回りに増加する方向。 
         '''
         goal = PoseStamped()
-        goal.header.frame_id = "red_bot/map"        # 世界座標系で指定する
+        goal.header.frame_id = self.name + "/map" # 世界座標系で指定する
+        # goal.header.frame_id = "red_bot/map" # 世界座標系で指定する
         goal.header.stamp = rospy.Time.now()  # タイムスタンプは今の時間
         goal.pose.position.x = x
         goal.pose.position.y = y
@@ -206,9 +211,11 @@ class OnigiriRun(object):
 
 class image_converter:
     def __init__(self):
+        robot_name=rospy.get_param('~robot_name')
+        self.name = robot_name
         self.image_pub = rospy.Publisher("image_topic", Image, queue_size=1)
         self.bridge = CvBridge()
-        self.image_sub = rospy.Subscriber("/red_bot/image_raw",Image,self.callback)
+        self.image_sub = rospy.Subscriber("/"+ self.name+"/image_raw",Image,self.callback)
 
 
     def callback(self,data):
@@ -222,6 +229,8 @@ class image_converter:
 
         # RGB表色系からHSV表色系に変換                                                           
         hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+
+        cv2.imwrite("/home/lsic/デスクトップ/dst/2-hsv.png",hsv_image)
 
         # 赤                                                 
         # color_min = np.array([150,100,150])
@@ -238,6 +247,7 @@ class image_converter:
         #マスクの画像
         mask = cv2.inRange(hsv_image, color_min, color_max)
         res = cv2.bitwise_and(cv_image, cv_image, mask=mask)
+        cv2.imwrite("/home/lsic/デスクトップ/dst/3-blue-mask.png",res)
  
         # グレースケール化（色抽出）
         img = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
