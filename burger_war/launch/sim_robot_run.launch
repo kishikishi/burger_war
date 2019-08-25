@@ -3,8 +3,15 @@
 
 <!-- blue side robot -->
   <group ns="blue_bot">
+
+  <!-- Launch Navigation -->
+    <include file="$(find burger_navigation)/launch/your_burger_navigation_sample.launch">
+        <arg name="robot_name" value="blue_bot" />
+    </include>
       <!-- enemy bot run -->
-      <node pkg="burger_war" type="enemy.py" name="enemyRun" output="screen"/>
+      <node pkg="burger_war" type="naviRun.py" name="enemyRun" output="screen">
+      <param name="robot_name" value="blue_bot" />
+      </node>
   </group>
 
 <!-- red side robot -->
