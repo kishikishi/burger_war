@@ -10,7 +10,9 @@
 
     <!-- sample program node -->
 
-    <node pkg="burger_war" type="naviRun.py" name="randomRun" output="screen"/>
+    <node pkg="burger_war" type="naviRun.py" name="randomRun" output="screen">
+        <param name="robot_name" value="$(arg robot_name)" />
+    </node>
 
     <!-- END sample program node -->
 
