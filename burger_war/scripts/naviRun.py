@@ -47,7 +47,8 @@ class OnigiriRun(object):
         # RESPECT @hotic06 ロボット名の取得の仕方
         robot_name=rospy.get_param('~robot_name')
         self.name = robot_name
-        print(self.name)
+        robot_side=rospy.get_param('~side')
+        self.side = robot_side
         self.result = rospy.Subscriber(
             '/'+self.name  + '/move_base/result', MoveBaseActionResult, self.goalcallback, queue_size=1)
         self.cmd_vel_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
@@ -63,6 +64,12 @@ class OnigiriRun(object):
         header = {'stamp': rospy.Time.now(), 'frame_id': self.name +"/map"}
         pose = {'position': {'x': 1.0, 'y': 1.0,
                              'z': 0.0}, 'orientation': {'w': 1.0}}
+
+    def setUp(self):
+        if self.name == 'red_bot' or self.side == 'r':
+            self. name == 'red_bot'
+        else:
+            self.name == 'blue_bot'
 
     def togoal(self, x, y, radians):
         '''
@@ -265,6 +272,8 @@ if __name__ == '__main__':
     image   = image_converter()
 
     a = OnigiriRun()
+    a.setUp()
+
     while not rospy.is_shutdown():
         a.checkImage()
 
