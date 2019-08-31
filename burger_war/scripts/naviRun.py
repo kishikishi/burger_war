@@ -1,166 +1,289 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import random
-from decimal import (Decimal, ROUND_DOWN)
 import sys
 import rospy
 from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu
 from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import Quaternion
 from move_base_msgs.msg import MoveBaseActionResult
+from actionlib_msgs.msg import GoalID
+from move_base_msgs.msg import MoveBaseActionFeedback
 from tf.transformations import quaternion_from_euler
+from tf.transformations import euler_from_quaternion
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
 import math
 import numpy as np
 import cv2
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge, CvBridgeError
-from nav_msgs.msg import Odometry
+import sys
+import select
+import termios
+import tty
+from robotStatus import *
 
-state_x = -1
-count = 0
 
-DISTINATION = [[-1, 0, 0], [-0.5, 0, 0]]
-DISTINATION2 = [[0, 1.5, 315], [1.5, 0, 270], [0, -1.5, 225], [-1.5, 0, 135]]
-DISTINATION3 = [[-0.7,0.7, 45], [0, 1.5, 315], [0.7, 0.7, 315], [1.5, 0, 225], [0.7, -0.7, 225],[0, -1.5, 225],[-0.7,0.7, 135], [-1.5, 0, 315]]
-DISTINATION4 = [[-0.8, 0.15, 50], [0, 0.5, 300], [-0.8, -0.15, 310], [0, -0.5, 60]]
-DISTINATION_NOW = 0
-DISTINATION_NUM = 2
-DISTINATION_NUM2 = 4
-DISTINATION_NUM3 = 8
-DISTINATION_NUM4 = 4
-FLG_GOAL = 0
-FLG_STUCK = 0
+class Trutlerun(object):
 
-mode = 1  # 0:wall running, 1:color attack
-
-x_buf = 0
-y_buf = 0
-cnt = 0
-
-class OnigiriRun(object):
-
-    def __init__(self):
-        # self.scan = rospy.Subscriber(
-        #     '/red_bot/scan', LaserScan, self.LaserScanCallback, queue_size=1)
-        # RESPECT @hotic06 ロボット名の取得の仕方
-        robot_name=rospy.get_param('~robot_name')
-        self.name = robot_name
-        robot_side=rospy.get_param('~side')
-        self.side = robot_side
+    def __init__(self, image):
+        self.odom = rospy.Subscriber(
+            'odom', Odometry, self.odomCallback, queue_size=1)
+        self.scan = rospy.Subscriber(
+            'scan', LaserScan, self.laserScanCallback, queue_size=3)
         self.result = rospy.Subscriber(
-            '/'+self.name  + '/move_base/result', MoveBaseActionResult, self.goalcallback, queue_size=1)
-        self.cmd_vel_pub = rospy.Publisher('cmd_vel', Twist, queue_size=1)
+            'move_base/result', MoveBaseActionResult, self.goalCallback, queue_size=1)
+        # self.result = rospy.Subscriber(
+        #     'war_state', String, self.warstatecallback, queue_size=1)
+        self.cmd_vel_pub = rospy.Subscriber(
+            'cmd_vel', Twist, self.speedCallback, queue_size=1)
+
         self.slam = rospy.Publisher(
-            '/'+self.name + '/move_base_simple/goal', PoseStamped, queue_size=1)
-        
-        # velocity publisher
-        self.vel_pub = rospy.Publisher('cmd_vel', Twist,queue_size=1)
+            'move_base_simple/goal', PoseStamped, queue_size=3)
+        self.cancel = rospy.Publisher(
+            'move_base/cancel', GoalID, queue_size=1)
+        self.vel_pub = rospy.Publisher('cmd_vel', Twist, queue_size=3)
+        self.image = image
+        self.cflg_odom = False
+        self.cflg_laser = False
+        self.cflg_goal = False
+        self.imgcount = 0
 
-        # odometry subscriber
-        self.odom_sub = rospy.Subscriber("/" + self.name + "/odom",Odometry,self.odom_callback)
+    def warStateCallback(self, data):
+        print(data)
 
-        header = {'stamp': rospy.Time.now(), 'frame_id': self.name +"/map"}
-        pose = {'position': {'x': 1.0, 'y': 1.0,
-                             'z': 0.0}, 'orientation': {'w': 1.0}}
+    def odomCallback(self, data):
+        STATUS.d_odm = data
+        self.cflg_odom = True
 
-    def setUp(self):
-        if self.name == 'red_bot' or self.side == 'r':
-            self. name == 'red_bot'
-        else:
-            self.name == 'blue_bot'
+    def speedCallback(self, data):
+        STATUS.twist[0] = data.linear.x
+        STATUS.twist[1] = data.angular.z
+        print(STATUS.twist)
 
-    def togoal(self, x, y, radians):
+    def goalCallback(self, data):
+        if(data.status.status == 3 and STATUS.flg_timer == 0):
+            self.cflg_goal = 1
+
+    def laserScanCallback(self, data):
+        self.cflg_laser = True
+        STATUS.d_range = self.forspline(np.array(data.ranges))
+
+    def updateStatus(self):
+        if(self.cflg_odom):
+            self.cflg_odom = False
+            STATUS.position[1] = STATUS.position[0]
+            STATUS.position[0] = np.array(
+                [STATUS.d_odm.pose.pose.position.x, STATUS.d_odm.pose.pose.position.z])
+            #vel = STATUS.position[0]-STATUS.position[1]
+            #STATUS.vel = np.linalg.norm(vel, ord=2)*30
+            STATUS.orient = np.rad2deg(euler_from_quaternion(
+                (STATUS.d_odm.pose.pose.orientation.x, STATUS.d_odm.pose.pose.orientation.y, STATUS.d_odm.pose.pose.orientation.z, STATUS.d_odm.pose.pose.orientation.w))[2])
+            if (STATUS.orient < 0):
+                STATUS.orient = 360+STATUS.orient
+            
+
+        if(self.cflg_laser):
+            self.cflg_laser = False
+            # update direction
+            if(STATUS.mode == M.NAVI):
+                STATUS.flg_direction = STATUS.twist[0] >= 0
+            STATUS.flg_issafe = self.checkSafeRoute()
+
+            if(STATUS.flg_issafe):
+                if(STATUS.flg_strotate):
+                    print('stop0')
+                    STATUS.flg_strotate = False
+                    STATUS.setModeInTime(M.STOP,STATUS.nextmode,0.1)
+            else:
+                if(STATUS.mode == M.NAVI and STATUS.twist[0]<0.05):
+                    STATUS.setMode(M.STOP)
+                    self.inNaviAvoid(M.NAVI)
+                if(STATUS.mode == M.STRAIGHT):
+                    print('stop1')
+                    STATUS.setMode(M.STOP)
+                    self.avoidobstacle(M.STRAIGHT)
+                if(STATUS.mode == M.ATTACK):
+                    STATUS.setMode(M.STOP)                    
+                    self.avoidobstacle(M.STRAIGHT)                    
+                if(STATUS.mode == M.ESCAPE):
+                    print('stop2')
+                    STATUS.setMode(M.STOP)
+                    rospy.Timer(rospy.Duration(5),self.setStatusStraight, oneshot=True)
+                    self.avoidobstacle(M.ESCAPE)                
+
+        if(STATUS.mode == M.ROTATE):
+            if(STATUS.twist[1]==0):
+                if(STATUS.flg_rotate==1):
+                    self.pubTwist(0,0.8)
+                if(STATUS.flg_rotate==-1):
+                    self.pubTwist(0,-0.8)
+            if(STATUS.flg_rotate != 0):
+                myrobot.checkrotation()
+
+        if(self.cflg_goal):
+            self.cflg_goal = False
+            STATUS.distination_now += 1
+            print("Distination: " + str(STATUS.distination_now))
+            if(STATUS.distination_now == 4):
+                STATUS.distination_now = 0
+            self.toGoal(*STATUS.basepoint[STATUS.distination_now])
+            STATUS.flg_timer = True
+            # rospy.Timer(rospy.Duration(10),
+            #             myrobot.changeDestination, oneshot=True)
+            rospy.Timer(rospy.Duration(
+                1), self.resetTimer, oneshot=True)
+
+        if(STATUS.flg_image):
+            STATUS.flg_image = 0
+            r,g = image.checkimage()
+            if(STATUS.flg_target > 0 and STATUS.mode!=M.ATTACK):
+                STATUS.flg_swing=False            
+                STATUS.flg_target = 0
+                STATUS.setMode(M.ATTACK)
+            elif(STATUS.mode == M.ATTACK):
+                if(STATUS.flg_target==2):
+                    STATUS.flg_target = -1
+                    STATUS.setModeInTime(M.ESCAPE,M.STRAIGHT,10)
+                    STATUS.setBusy(5)
+                if(STATUS.flg_target==1):
+                    STATUS.flg_target = -1
+                    z=(g-320)/160
+                    self.pubTwist(STATUS.speed,-z)
+                if(STATUS.flg_target==0):
+                    STATUS.setModeInTime(M.ESCAPE,M.STRAIGHT,10)
+                    STATUS.setBusy(5)
+
+            if(STATUS.mode == M.SEARCH):
+                if(STATUS.flg_enemy):
+                    z=(r-320)/160
+                    self.pubTwist(0,-r)
+                else:
+                    STATUS.setModeInTime(M.ESCAPE,M.STRAIGHT,5)
+    
+    def Swing(self,event):
+        print('testttttttttttttttttttttttttt')
+        if (STATUS.mode==M.STRAIGHT):
+            target = 90 if STATUS.d_range[90]>STATUS.d_range[270] else -90
+            self.rotation(target,M.STRAIGHT)
+            #STATUS.flg_swing=True
+
+    def toGoal(self, x, y, radians):
         '''
         概要
         目的地を指定して移動する
-
-    　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　引数
         x : 上下方向の座標 (-1<x<1)
         y : 左右方向の座標 (-1<y<1)
         radians : 目標姿勢。0度が上。半時計回りに増加する方向。 
         '''
         goal = PoseStamped()
-        goal.header.frame_id = self.name + "/map" # 世界座標系で指定する
-        # goal.header.frame_id = "red_bot/map" # 世界座標系で指定する
+        goal.header.frame_id = "map"        # 世界座標系で指定する
         goal.header.stamp = rospy.Time.now()  # タイムスタンプは今の時間
         goal.pose.position.x = x
         goal.pose.position.y = y
         goal.pose.position.z = 0.0
         q = quaternion_from_euler(0, 0, math.radians(radians))
         goal.pose.orientation = Quaternion(*q)
+        print('呼び出し')
         self.slam.publish(goal)
 
-    def goalcallback(self, data):
-        if(data.status.status == 3):
-            global FLG_GOAL
-            FLG_GOAL = 1
-
-    # def LaserScanCallback(self, data):
-    #     vel = Twist()
-    #     vel.linear.x = 0.1
-    #     self.range = data.ranges[0]
-    #     if self.range > 0.5:
-    #         vel.angular.z = 0.5+(self.range-0.1)*2
-    #     elif self.range < 0.5:
-    #         vel.linear.x = -0.1
-    #         vel.angular.z = -0.5+(self.range-0.1)*2
-    #     else:
-    #         vel.angular.z = 0
-    #     print(self.range)
-    #     self.cmd_vel_pub.publish(vel)
-
-    def checkImage(self):
-        '''
-        mode=1->color attack. 
-        mode=0 ->wall running.
-        '''
-        global state_x
-        global mode
-        if state_x == -1:
-            mode = 0
+    def checkSafeRoute(self, distance=0.22, width=0.14):
+        th = np.linalg.norm([distance, width], ord=2)
+        angle = int(np.rad2deg(np.arctan2(width, distance)))
+        if(STATUS.flg_direction):
+            checkresult = (np.all(STATUS.d_range[0:angle] > th)
+                           and np.all(STATUS.d_range[-angle:360] > th))
         else:
-            mode = 1
+            checkresult = np.all(STATUS.d_range[180-angle:180+angle] > th)
+        return checkresult
 
-    def calcTwist(self):
-        global state_x
-        global mode
-        mode = 1
-        if state_x >= 360:
-            # print("right")
-            x = 0
-            th = -0.2
-        elif state_x <= 280 and state_x >= 0:
-            # print("left")
-            x = 0
-            th = 0.2
-        elif 260 < state_x and state_x <360: # 対象が範囲内
-            # print("center")
-            x = 0.2
-            th = 0
-        elif state_x == -1:  # 対象が範囲内にないとき
+    def rotation(self, angle, mode):
+        if(STATUS.flg_isbusy):
             return
+        STATUS.setMode(M.ROTATE)
+        STATUS.targetorient = STATUS.orient+angle
+        STATUS.nextmode = mode
+        if(STATUS.targetorient > 359):
+            STATUS.targetorient = STATUS.targetorient-360
+            STATUS.flg_targetorient = 1
 
-        twist = Twist()
-        twist.linear.x = x; twist.linear.y = 0; twist.linear.z = 0
-        twist.angular.x = 0; twist.angular.y = 0; twist.angular.z = th
-        return twist
+        if (STATUS.targetorient < 0):
+            STATUS.targetorient = 360+STATUS.targetorient
+            STATUS.flg_targetorient = 1
 
+        if(angle > 0):
+            if (STATUS.targetorient > 355):
+                STATUS.targetorient = 355
+            z = 0.8
+            STATUS.flg_rotate = 1
 
-    def strategy(self):
-        r = rospy.Rate(1) # change speed 1fps
+        if(angle < 0):
+            if (STATUS.targetorient < 5):
+                STATUS.targetorient = 5
+            z = - 0.8
+            STATUS.flg_rotate = -1
+        self.pubTwist(0, z)
 
-        target_speed = 0
-        target_turn = 0
-        control_speed = 0
-        control_turn = 0
-
-        twist = self.calcTwist()
-        # print(twist)
-        self.vel_pub.publish(twist)
-
-        r.sleep() 
+    def checkrotation(self):
+        if(STATUS.flg_rotate == 1):
+            if (STATUS.flg_targetorient):
+                if (abs(STATUS.orient-STATUS.targetorient) < 5):
+                    STATUS.flg_targetorient = 0
+            elif(STATUS.orient > STATUS.targetorient):
+                STATUS.setMode(M.STOP)
+                if(STATUS.flg_direction==False):
+                    target=180 if STATUS.twist[0]<0 else -180
+                    self.rotation(target,STATUS.nextmode)
+                    return
+                if(STATUS.flg_swing):
+                    STATUS.flg_swing=False
+                    self.rotation(-90,STATUS.nextmode)
+                    return
+                print('stop3')
+                STATUS.flg_rotate = 0
+                STATUS.setMode(STATUS.nextmode)
+                STATUS.nextmode=M.NONE
+                #STATUS.setBusy(0.5)
+        if(STATUS.flg_rotate == -1):
+            if (STATUS.flg_targetorient):
+                if (abs(STATUS.orient-STATUS.targetorient) < 5):
+                    STATUS.flg_targetorient = 0
+            elif(STATUS.orient < STATUS.targetorient):
+                STATUS.setMode(M.STOP)
+                if(STATUS.flg_direction==False):
+                    target=180 if STATUS.twist[0]<0 else -180
+                    self.rotation(target,STATUS.nextmode)
+                    return
+                
+                print('stop4')
+                STATUS.flg_rotate = 0
+                STATUS.setMode(STATUS.nextmode)
+                STATUS.nextmode=M.NONE
+                #STATUS.setBusy(0.5)
+    
+    def inNaviAvoid(self, nextmode):
+        target = 180 if STATUS.twist[1]>0 else -180
+        STATUS.flg_strotate = True
+        self.rotation(target, nextmode)
+    
+    def avoidobstacle(self, nextmode):
+        emp = 27
+        rg = 80
+        STATUS.d_range[0:emp] = STATUS.d_range[0:emp]*10
+        STATUS.d_range[-emp:360] = STATUS.d_range[-emp:360]*10
+        STATUS.d_range[180-emp:180+emp] = STATUS.d_range[180-emp:180+emp]*10
+        if(STATUS.flg_direction):
+            target = 180 if np.mean(STATUS.d_range[0:rg]) > np.mean(
+                STATUS.d_range[-rg:360]) else -180
+        else:
+            target = -180 if (np.mean(STATUS.d_range[180-rg:180]) >
+                             np.mean(STATUS.d_range[180:180+rg])) else 180
+        STATUS.flg_strotate = True
+        if(STATUS.mode==M.ESCAPE):
+            target*=0.3
+        self.rotation(target, nextmode)
 
     def odom_callback(self,odom):
         global x_buf
@@ -214,82 +337,134 @@ class OnigiriRun(object):
             twist.angular.x = 0; twist.angular.y = 0; twist.angular.z = th
             self.vel_pub.publish(twist)
             r.sleep() 
-        #self.vel_pub.publish(Twist())
+
+
+        # ----------------- util funcs --------------#
+    
+    def forspline(self,data):
+        minix=np.where(data>0)[0][0]
+        l=len(data)-minix
+        for i in range(l):
+            if (data[i+minix]==0):
+                data[i+minix]=data[i+minix-1]
+        for i in range(minix):
+            data[i]=data[-1]  
+        return data
+
+    def resetTimer(self, event):
+        STATUS.flg_timer = False
+
+    def changeDestination(self, event):
+        if(STATUS.flg_timer == False):
+            self.cflg_goal = 1
+    def setStatusStraight(self,event):
+        STATUS.setMode(M.STRAIGHT)
+
+    def pubTwist(self, x, z):
+        vel = Twist()
+        vel.linear.x = x
+        vel.linear.y = 0
+        vel.linear.z = 0
+        vel.angular.x = 0
+        vel.angular.y = 0
+        vel.angular.z = z
+        self.vel_pub.publish(vel)
+
+    def stop(self):
+        self.pubTwist(0, 0)
+    
+
+
+
+
 
 class image_converter:
     def __init__(self):
-        robot_name=rospy.get_param('~robot_name')
-        self.name = robot_name
         self.image_pub = rospy.Publisher("image_topic", Image, queue_size=1)
         self.bridge = CvBridge()
-        self.image_sub = rospy.Subscriber("/"+ self.name+"/image_raw",Image,self.callback)
+        self.image_sub = rospy.Subscriber(
+            "image_raw", Image, self.callback)
+        self.image = 0
 
+    def callback(self, data):
+        self.image = data
+        STATUS.flg_image = True
 
-    def callback(self,data):
-        global state_x
+    def checkimage(self):
+        ng=0
+        rg=0
+        STATUS.flg_enemy=False
+
         try:
-            cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+            cv_image = self.bridge.imgmsg_to_cv2(self.image, "bgr8")
         except CvBridgeError as e:
             print(e)
-
-        cv2.imwrite("/home/lsic/デスクトップ/dst/1-test.png",cv_image)
-
-        # RGB表色系からHSV表色系に変換                                                           
+        # RGB表色系からHSV表色系に変換
         hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+        
+        # 赤
+#         color_min = np.array([0, 50, 50])
+#         color_max = np.array([10, 255, 255])
+        color_min = np.array([150,100,150])
+        color_max = np.array([180,255,255])
 
-        cv2.imwrite("/home/lsic/デスクトップ/dst/2-hsv.png",hsv_image)
+        # マスクの画像
+        mask = cv2.inRange(hsv_image, color_min, color_max)
+        res = cv2.bitwise_and(cv_image, cv_image, mask=mask)
+        # グレースケール化（色抽出）
+        img = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
+        mu = cv2.moments(img, False)
+        cv2.imwrite("/home/nryk/Desktop/dst/2-hsv.png", img)
+        if(len(np.where(img>0)[0])>100):
+            STATUS.flg_enemy=True
 
-        # 赤                                                 
-        # color_min = np.array([150,100,150])
-        # color_max = np.array([180,255,255])
-
+        if mu["m00"] != 0:
+            state_rx, ry = int(mu["m10"]/mu["m00"]), int(mu["m01"]/mu["m00"])
+        else:
+            state_rx, ry = -1, -1
+            
         # 青
         # color_min = np.array([110, 50, 50])
         # color_max = np.array([130, 255, 255])
-
         # 緑
-        color_min = np.array([30, 100, 200])
+        color_min = np.array([40, 50, 50])
         color_max = np.array([60, 255, 250])
-        
-        #マスクの画像
+        # マスクの画像
         mask = cv2.inRange(hsv_image, color_min, color_max)
         res = cv2.bitwise_and(cv_image, cv_image, mask=mask)
-        cv2.imwrite("/home/lsic/デスクトップ/dst/3-blue-mask.png",res)
- 
         # グレースケール化（色抽出）
         img = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
-
         mu = cv2.moments(img, False)
         if mu["m00"] != 0:
-            state_x,y= int(mu["m10"]/mu["m00"]) , int(mu["m01"]/mu["m00"])
+            state_gx, gy = int(mu["m10"]/mu["m00"]), int(mu["m01"]/mu["m00"])
+            # print('green')
+            ng=len(np.where(img>0)[0])
         else:
-            state_x,y = -1,-1
+            state_gx, gy = -1, -1
+    
+        if(ng>3000):
+            STATUS.flg_target = 1
+        if(ng>30000):
+            STATUS.flg_target = 2
 
-        # print(state_x,y)
+        
+        # z = (state_x-320)/160
+        
+        return state_rx,state_gx
+
 
 if __name__ == '__main__':
     rospy.init_node('onigiri_run')
-    image   = image_converter()
-
-    a = OnigiriRun()
-    a.setUp()
+    image = image_converter()
+    myrobot = Trutlerun(image)
+    STATUS.robot=myrobot
+    rospy.timer.sleep(2)
+    r=rospy.Rate(100)
+    STATUS.setMode(M.STRAIGHT)
+    #myrobot.rotation(45, M.STRAIGHT)
+    #STATUS.setModeInTime(M.STRAIGHT,M.ESCAPE,10)
+    rospy.Timer(rospy.Duration(10),myrobot.Swing)
 
     while not rospy.is_shutdown():
-        a.checkImage()
-
-        if(FLG_STUCK):
-            print("STUCK!")
-            FLG_STUCK = 0
-            a.collisionDetect()
-        elif mode:
-            a.strategy()
-        else:    
-            a.togoal(*DISTINATION4[DISTINATION_NOW])
-            # print(FLG_GOAL)
-            if(FLG_GOAL):
-                FLG_GOAL = 0
-                DISTINATION_NOW += 1
-                print(DISTINATION_NOW)
-                if(DISTINATION_NOW == DISTINATION_NUM4):
-                    DISTINATION_NOW = 0
-    rospy.spin()
+        myrobot.updateStatus()
+        r.sleep()
