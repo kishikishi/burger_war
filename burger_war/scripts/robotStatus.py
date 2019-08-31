@@ -47,7 +47,7 @@ class STATUS():
     d_range= 0
     def __init__(self):
         pass
-    speed=0.
+    speed=0.22
     @staticmethod
     def setMode(mode):
         if mode == M.STOP:
