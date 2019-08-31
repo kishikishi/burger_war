@@ -3,15 +3,10 @@
   <arg name="robot_name" default=""/> <!-- robot_name for use NAMESPACE -->
   <arg name="side" default="b"/> <!-- "b" = blue side, "r" = red side  -->  <!-- You can change control program  -->
 
-    <!-- Launch Navigation -->
-    <include file="$(find burger_navigation)/launch/your_burger_navigation_sample.launch">
-        <arg name="robot_name" value="$(arg robot_name)" />
-    </include>
-
     <!-- sample program node -->
 
     <node pkg="burger_war" type="naviRun.py" name="randomRun" output="screen">
-        <param name="robot_name" value="$(arg robot_name)">
+        <param name="robot_name" value="$(arg robot_name)"/>
         <param name="robot_side" value="$(arg side)" />
     </node>
 
